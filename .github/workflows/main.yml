@@ -1,0 +1,77 @@
+name: Gerar APK
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  workflow_dispatch: # permite rodar manualmente na aba Actions
+
+permissions:
+  contents: write # necessário só para publicar o APK em um Release (tags v*)
+
+jobs:
+  build-apk:
+    # Versão fixa de propósito: "ubuntu-latest" pode mudar de versão e quebrar o build.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v6
+
+      - name: Instalar Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Instalar Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Instalar dependências do sistema
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git zip unzip autoconf libtool pkg-config zlib1g-dev \
+            libncurses5-dev libncursesw5-dev libtinfo6 cmake libffi-dev \
+            libssl-dev automake autopoint gettext
+
+      - name: Instalar o Buildozer
+        run: |
+          python -m pip install --upgrade pip
+          pip install buildozer setuptools "cython==0.29.34"
+
+      # Guarda o Android SDK/NDK e as bibliotecas já compiladas entre execuções.
+      # Se um build falhar de forma estranha, apague o cache em Actions > Caches.
+      - name: Restaurar cache do Buildozer
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.buildozer
+            .buildozer
+          key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          restore-keys: |
+            buildozer-${{ runner.os }}-
+
+      - name: Compilar o APK
+        run: buildozer -v android debug
+
+      - name: Enviar o APK como artefato
+        uses: actions/upload-artifact@v7
+        with:
+          name: padrao9pontos-apk
+          path: bin/*.apk
+          if-no-files-found: error
+
+      # Ao criar uma tag (ex.: v1.0), o APK também vai para a aba Releases,
+      # de onde dá para baixar direto pelo celular.
+      - name: Publicar em Releases
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" bin/*.apk \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes
